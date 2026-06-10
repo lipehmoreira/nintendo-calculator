@@ -103,18 +103,67 @@ const translations = {
 
 // Tabela oficial de preços da Nintendo Brasil para cópias digitais (Atualizada em Abril de 2026)
 const NINTENDO_BRL_TIERS = {
-  119.99: 664.90,
-  79.99: 439.90,
-  69.99: 389.90,
-  59.99: 329.90,
-  49.99: 279.90,
-  39.99: 219.90,
-  29.99: 164.90,
-  19.99: 109.90,
-  9.99: 54.90,
-  4.99: 26.90,
+  119.99: 599.00,
+  79.99: 399.00,
+  69.99: 357.90,
+  59.99: 299.00,
+  49.99: 249.00,
+  39.99: 199.00,
+  29.99: 149.00,
+  19.99: 99.00,
+  14.99: 74.99,
+  9.99: 49.99,
+  4.99: 24.99,
   0: 0
 };
+
+// Cache de preços BRL reais da Nintendo eShop
+const BRL_PRICE_CACHE_KEY = 'nintendo_brl_price_cache';
+const BRL_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 horas
+
+let brlPriceCache = {};
+
+function loadBRLPriceCache() {
+  const cached = localStorage.getItem(BRL_PRICE_CACHE_KEY);
+  if (cached) {
+    try {
+      brlPriceCache = JSON.parse(cached);
+    } catch (e) {
+      console.error('Erro ao ler cache de preços BRL:', e);
+      brlPriceCache = {};
+    }
+  }
+}
+
+function saveBRLPriceCache() {
+  localStorage.setItem(BRL_PRICE_CACHE_KEY, JSON.stringify(brlPriceCache));
+}
+
+// Proxies CORS com fallback em cadeia para contornar restrições da API Nintendo
+const CORS_PROXIES = [
+  {
+    name: 'allorigins',
+    buildUrl: (url) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
+    parseResponse: (data) => {
+      try {
+        return typeof data.contents === 'string' ? JSON.parse(data.contents) : data.contents;
+      } catch (e) {
+        return null;
+      }
+    }
+  },
+  {
+    name: 'corslol',
+    buildUrl: (url) => `https://api.cors.lol/?url=${encodeURIComponent(url)}`,
+    parseResponse: (data) => data
+  },
+  {
+    name: 'codetabs',
+    buildUrl: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+    parseResponse: (data) => data
+  }
+];
+
 
 // Estado global do aplicativo
 let state = {
@@ -195,14 +244,13 @@ async function fetchExchangeRate() {
   }
 }
 
-// Converte preços em dólar para a tabela real brasileira (Tabela eShop Brasil Abril 2026)
+// Converte preços em dólar para a tabela real brasileira (Tabela eShop Brasil) como fallback
 function convertUSDtoBRL(usdValue, regularUSD = null) {
   const val = usdValue === null || usdValue === undefined ? 0 : usdValue;
   
   // Se for um valor promocional, calcula o BRL proporcional à redução do dólar
-  // Exemplo: se o jogo base é $59.99 (R$329.90) e está por $39.99 (redução de 33%), o preço local será R$329.90 * (39.99/59.99) = R$ 219.90
   if (regularUSD && regularUSD > 0 && Math.abs(val - regularUSD) > 0.01) {
-    const regularBRL = convertUSDtoBRL(regularUSD);
+    const regularBRL = convertUSDtoBRL(regularUSD, null);
     return regularBRL * (val / regularUSD);
   }
   
@@ -219,15 +267,125 @@ function convertUSDtoBRL(usdValue, regularUSD = null) {
   return val * state.exchangeRate;
 }
 
+// Obtém o preço em BRL para um nsuid usando o cache da API oficial ou fallback de tiers
+function getGameBRLPrice(nsuid, usdPrice, regularUsdPrice = null) {
+  loadBRLPriceCache();
+  const val = usdPrice === null || usdPrice === undefined ? 0 : usdPrice;
+
+  if (nsuid && brlPriceCache[nsuid]) {
+    const cacheEntry = brlPriceCache[nsuid];
+    
+    // Se for promocional (preço atual menor que regular)
+    if (regularUsdPrice && val < regularUsdPrice) {
+      if (cacheEntry.brlDiscountPrice !== null && cacheEntry.brlDiscountPrice !== undefined) {
+        return { value: cacheEntry.brlDiscountPrice, isVerified: true };
+      }
+      // Se não tivermos o desconto em BRL no cache, mas temos o preço base BRL no cache, calcula proporcionalmente
+      if (cacheEntry.brlPrice !== null && cacheEntry.brlPrice !== undefined) {
+        return { value: cacheEntry.brlPrice * (val / regularUsdPrice), isVerified: true };
+      }
+    } else {
+      // Preço regular
+      if (cacheEntry.brlPrice !== null && cacheEntry.brlPrice !== undefined) {
+        return { value: cacheEntry.brlPrice, isVerified: true };
+      }
+    }
+  }
+
+  // Fallback para conversão de tiers/câmbio
+  const estimatedBRL = convertUSDtoBRL(val, regularUsdPrice);
+  return { value: estimatedBRL, isVerified: false };
+}
+
+// Busca em lote os preços em BRL oficiais da Nintendo API através de proxies CORS
+async function fetchBRLPrices(nsuids) {
+  loadBRLPriceCache();
+  const now = Date.now();
+  
+  // Filtra apenas NSUIDs que precisam ser atualizados (não estão no cache ou expiraram)
+  const nsuidsToFetch = nsuids.filter(id => {
+    if (!id) return false;
+    const cached = brlPriceCache[id];
+    return !cached || (now - cached.fetchedAt > BRL_CACHE_TTL);
+  });
+  
+  if (nsuidsToFetch.length === 0) return;
+
+  // Lote de até 50 NSUIDs por request
+  const chunks = [];
+  for (let i = 0; i < nsuidsToFetch.length; i += 50) {
+    chunks.push(nsuidsToFetch.slice(i, i + 50));
+  }
+
+  for (const chunk of chunks) {
+    const idsString = chunk.join(',');
+    const targetNintendoUrl = `https://api.ec.nintendo.com/v1/price?country=BR&lang=pt&ids=${idsString}`;
+    let success = false;
+
+    for (const proxy of CORS_PROXIES) {
+      try {
+        console.log(`Buscando preços BRL via proxy: ${proxy.name}...`);
+        const proxyUrl = proxy.buildUrl(targetNintendoUrl);
+        
+        // Configura timeout de 6 segundos para evitar travar a requisição
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
+        
+        const response = await fetch(proxyUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) throw new Error(`Status ${response.status}`);
+        
+        const rawData = await response.json();
+        const data = proxy.parseResponse(rawData);
+
+        if (data && data.prices && Array.isArray(data.prices)) {
+          data.prices.forEach(item => {
+            const nsuid = item.title_id;
+            let brlReg = null;
+            let brlDisc = null;
+
+            if (item.regular_price) {
+              brlReg = parseFloat(item.regular_price.raw_value);
+            }
+            if (item.discount_price) {
+              brlDisc = parseFloat(item.discount_price.raw_value);
+            }
+
+            brlPriceCache[nsuid] = {
+              brlPrice: brlReg,
+              brlDiscountPrice: brlDisc,
+              fetchedAt: now
+            };
+          });
+          
+          success = true;
+          console.log(`Preços BRL atualizados com sucesso via ${proxy.name}`);
+          break; // Sucesso com esse proxy, sai do loop de proxies para este chunk
+        }
+      } catch (e) {
+        console.warn(`Erro no proxy ${proxy.name}:`, e.message || e);
+      }
+    }
+
+    if (!success) {
+      console.warn(`Não foi possível carregar preços oficiais da eShop BR para os IDs: ${idsString}. Usando fallbacks.`);
+    }
+  }
+
+  saveBRLPriceCache();
+}
+
 // Formatar valor numérico de forma segura e inteligente (usando tabelas oficiais da Nintendo)
-function formatCurrency(usdValue, regularUSD = null) {
+function formatCurrency(usdValue, regularUSD = null, nsuid = null) {
   if (usdValue === null || usdValue === undefined) return '';
   if (state.currency === 'BRL') {
-    const brlValue = convertUSDtoBRL(usdValue, regularUSD);
+    const brlValue = getGameBRLPrice(nsuid, usdValue, regularUSD).value;
     return `R$ ${brlValue.toFixed(2)}`;
   }
   return `$${usdValue.toFixed(2)}`;
 }
+
 
 // Atualiza a UI dos botões de Idioma
 function updateLangButtonsUI() {
@@ -279,10 +437,22 @@ function setupEventListeners() {
 
   // Seletor de Moeda Principal
   currencyBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       currencyBtns.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.currency = btn.dataset.currency;
+      
+      if (state.currency === 'BRL') {
+        const nsuidsToFetch = [
+          ...state.searchResults.map(g => g.nsuid),
+          ...state.selectedGames.map(g => g.nsuid)
+        ].filter(id => id);
+        
+        if (nsuidsToFetch.length > 0) {
+          await fetchBRLPrices(nsuidsToFetch);
+        }
+      }
+      
       updateCalculations();
       renderSelectedGames();
       renderGamesGrid();
@@ -425,6 +595,14 @@ async function performSearch(query) {
       });
       
       renderGamesGrid();
+
+      // Busca os preços em BRL oficiais da eShop no background para os resultados encontrados
+      const searchNsuids = state.searchResults.map(g => g.nsuid).filter(id => id);
+      if (searchNsuids.length > 0 && state.currency === 'BRL') {
+        fetchBRLPrices(searchNsuids).then(() => {
+          renderGamesGrid();
+        });
+      }
     } else {
       renderEmptyState(translations[state.language].noResults);
     }
@@ -501,18 +679,54 @@ function renderGamesGrid() {
     } else if (game.regularPrice === 0) {
       priceHTML = `<span class="card-price">${translations[lang].free}</span>`;
     } else {
-      const regularFormatted = formatCurrency(game.regularPrice);
-      const discountFormatted = hasDiscount ? formatCurrency(game.discountPrice, game.regularPrice) : '';
-      
-      if (hasDiscount) {
-        priceHTML = `
-          <span class="card-price discounted">
-            <span class="original-price-strike">${regularFormatted}</span>
-            ${discountFormatted}
-          </span>
-        `;
+      if (state.currency === 'BRL') {
+        const regBRL = getGameBRLPrice(game.nsuid, game.regularPrice);
+        const regularFormatted = `R$ ${regBRL.value.toFixed(2)}`;
+        
+        let discountFormatted = '';
+        let discBRL = null;
+        if (hasDiscount) {
+          discBRL = getGameBRLPrice(game.nsuid, game.discountPrice, game.regularPrice);
+          discountFormatted = `R$ ${discBRL.value.toFixed(2)}`;
+        }
+        
+        const isVerified = regBRL.isVerified && (!hasDiscount || discBRL.isVerified);
+        const badgeHTML = isVerified 
+          ? `<span class="price-badge verified" title="Preço oficial da eShop BR"><i class="fas fa-check-circle"></i> BR</span>`
+          : `<span class="price-badge estimated" title="Preço estimado com base em tiers/cotação"><i class="fas fa-exclamation-circle"></i> ~est</span>`;
+
+        if (hasDiscount) {
+          priceHTML = `
+            <div class="price-wrapper">
+              <span class="card-price discounted">
+                <span class="original-price-strike">${regularFormatted}</span>
+                ${discountFormatted}
+              </span>
+              ${badgeHTML}
+            </div>
+          `;
+        } else {
+          priceHTML = `
+            <div class="price-wrapper">
+              <span class="card-price">${regularFormatted}</span>
+              ${badgeHTML}
+            </div>
+          `;
+        }
       } else {
-        priceHTML = `<span class="card-price">${regularFormatted}</span>`;
+        const regularFormatted = `$${game.regularPrice.toFixed(2)}`;
+        const discountFormatted = hasDiscount ? `$${game.discountPrice.toFixed(2)}` : '';
+        
+        if (hasDiscount) {
+          priceHTML = `
+            <span class="card-price discounted">
+              <span class="original-price-strike">${regularFormatted}</span>
+              ${discountFormatted}
+            </span>
+          `;
+        } else {
+          priceHTML = `<span class="card-price">${regularFormatted}</span>`;
+        }
       }
     }
 
@@ -575,7 +789,8 @@ function toggleSelectGame(game) {
       customPrice: 0,
       imageUrl: game.imageUrl,
       itemType: game.itemType,
-      isSoon: game.isSoon
+      isSoon: game.isSoon,
+      nsuid: game.nsuid
     });
   }
 
@@ -600,6 +815,15 @@ function renderSelectedGames() {
   selectedList.innerHTML = '';
   const lang = state.language;
 
+  // Renderiza o disclaimer no topo da lista se houver itens selecionados
+  const disclaimer = document.createElement('div');
+  disclaimer.className = 'sidebar-disclaimer';
+  disclaimer.innerHTML = `
+    <i class="fas fa-info-circle"></i>
+    <span>${lang === 'pt' ? 'Valores BRL estimados. Clique no preço para ajustar!' : 'BRL values estimated. Click on price to adjust!'}</span>
+  `;
+  selectedList.appendChild(disclaimer);
+
   state.selectedGames.forEach((item, index) => {
     const div = document.createElement('div');
     div.className = 'selected-item';
@@ -616,22 +840,34 @@ function renderSelectedGames() {
       currentPriceValue = item.customPrice;
     }
 
-    // Converter preço para exibição
+    // Converter preço para exibição e verificar
     let displayPrice = '';
+    let isVerified = false;
     if (item.mode === 'custom') {
       displayPrice = `${state.currency === 'BRL' ? 'R$' : '$'} ${(item.customPrice || 0).toFixed(2)}`;
+      isVerified = true;
     } else {
       if (item.isSoon) {
         displayPrice = translations[lang].soon;
+        isVerified = true;
       } else if (item.originalPrice === 0) {
         displayPrice = translations[lang].free;
+        isVerified = true;
       } else {
-        displayPrice = formatCurrency(currentPriceValue, item.mode === 'discount' ? item.originalPrice : null);
+        if (state.currency === 'BRL') {
+          const regVal = item.mode === 'discount' ? item.originalPrice : null;
+          const brlObj = getGameBRLPrice(item.nsuid, currentPriceValue, regVal);
+          displayPrice = `R$ ${brlObj.value.toFixed(2)}`;
+          isVerified = brlObj.isVerified;
+        } else {
+          displayPrice = `$${currentPriceValue.toFixed(2)}`;
+          isVerified = true;
+        }
       }
     }
 
-    const labelRegular = item.isSoon ? translations[lang].soon : `${translations[lang].itemPriceRegular} (${formatCurrency(item.originalPrice)})`;
-    const labelPromo = item.discountPrice !== null && item.discountPrice !== undefined ? `${translations[lang].itemPricePromo} (${formatCurrency(item.discountPrice, item.originalPrice)})` : '';
+    const labelRegular = item.isSoon ? translations[lang].soon : `${translations[lang].itemPriceRegular} (${formatCurrency(item.originalPrice, null, item.nsuid)})`;
+    const labelPromo = item.discountPrice !== null && item.discountPrice !== undefined ? `${translations[lang].itemPricePromo} (${formatCurrency(item.discountPrice, item.originalPrice, item.nsuid)})` : '';
     const labelCustom = translations[lang].itemPriceCustom;
 
     // Badge do Tipo
@@ -665,13 +901,45 @@ function renderSelectedGames() {
             <input type="number" class="custom-price-input" data-index="${index}" value="${item.customPrice || 0}" step="any" min="0">
           </div>
         ` : `
-          <span class="selected-item-price">${displayPrice}</span>
+          <span class="selected-item-price hover-edit" data-index="${index}">
+            ${displayPrice}
+            ${state.currency === 'BRL' && item.mode !== 'custom' ? (isVerified ? `<span class="price-badge verified" style="font-size: 0.55rem; padding: 0.05rem 0.2rem; margin-left: 2px;" title="Preço oficial da eShop BR"><i class="fas fa-check"></i></span>` : `<span class="price-badge estimated" style="font-size: 0.55rem; padding: 0.05rem 0.2rem; margin-left: 2px;" title="Preço estimado"><i class="fas fa-exclamation"></i></span>`) : ''}
+            <i class="fas fa-pencil-alt" style="font-size: 0.65rem; margin-left: 2px; opacity: 0.5;"></i>
+          </span>
         `}
         <button class="remove-item-btn" data-index="${index}" aria-label="Remover">
           <i class="fas fa-trash-alt"></i>
         </button>
       </div>
     `;
+
+    // Event listener para clique no preço (ativa edição rápida)
+    const priceEditSpan = div.querySelector('.selected-item-price.hover-edit');
+    if (priceEditSpan) {
+      priceEditSpan.addEventListener('click', () => {
+        item.mode = 'custom';
+        let currentVal = item.price || 0;
+        if (item.mode === 'discount' && item.discountPrice !== null) {
+          currentVal = item.discountPrice;
+        }
+        item.customPrice = state.currency === 'BRL' 
+          ? parseFloat(getGameBRLPrice(item.nsuid, currentVal).value.toFixed(2)) 
+          : parseFloat(currentVal.toFixed(2));
+        
+        saveToLocalStorage();
+        updateCalculations();
+        renderSelectedGames();
+        
+        // Foca e seleciona o input de preço recém-criado
+        setTimeout(() => {
+          const input = selectedList.querySelector(`.custom-price-input[data-index="${index}"]`);
+          if (input) {
+            input.focus();
+            input.select();
+          }
+        }, 50);
+      });
+    }
 
     // Event Listeners
     const modeSelect = div.querySelector('.price-mode-select');
@@ -681,7 +949,7 @@ function renderSelectedGames() {
       
       if (e.target.value === 'custom' && state.selectedGames[idx].customPrice === 0) {
         const baseUSD = state.selectedGames[idx].price || 0;
-        state.selectedGames[idx].customPrice = state.currency === 'BRL' ? parseFloat(convertUSDtoBRL(baseUSD).toFixed(2)) : parseFloat(baseUSD.toFixed(2));
+        state.selectedGames[idx].customPrice = state.currency === 'BRL' ? parseFloat(getGameBRLPrice(state.selectedGames[idx].nsuid, baseUSD).value.toFixed(2)) : parseFloat(baseUSD.toFixed(2));
       }
       
       saveToLocalStorage();
@@ -744,7 +1012,12 @@ function updateCalculations() {
       }
     } else {
       totalUSD += itemPriceVal;
-      totalBRL += convertUSDtoBRL(itemPriceVal, item.mode === 'discount' ? item.originalPrice : null);
+      if (item.isSoon) {
+        totalBRL += 0;
+      } else {
+        const regVal = item.mode === 'discount' ? item.originalPrice : null;
+        totalBRL += getGameBRLPrice(item.nsuid, itemPriceVal, regVal).value;
+      }
     }
   });
 
@@ -790,12 +1063,22 @@ function saveToLocalStorage() {
 }
 
 function loadFromLocalStorage() {
+  loadBRLPriceCache();
   const data = localStorage.getItem('nintendo_selected_games');
   if (data) {
     try {
       state.selectedGames = JSON.parse(data);
       updateCalculations();
       renderSelectedGames();
+      
+      // Busca preços oficiais em BRL para os jogos salvos no localStorage
+      const selectedNsuids = state.selectedGames.map(g => g.nsuid).filter(id => id);
+      if (selectedNsuids.length > 0) {
+        fetchBRLPrices(selectedNsuids).then(() => {
+          updateCalculations();
+          renderSelectedGames();
+        });
+      }
     } catch (e) {
       console.error('Erro ao ler do localStorage:', e);
       state.selectedGames = [];
