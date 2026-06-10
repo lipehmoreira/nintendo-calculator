@@ -775,7 +775,7 @@ header {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: 1200; /* Aumentado para ficar acima da sidebar (1100) no mobile */
   opacity: 0;
   pointer-events: none;
   transition: var(--transition-smooth);
@@ -1219,7 +1219,20 @@ header {
   .modal-content {
     overflow-y: auto;
     width: 100%;
+    padding: 1rem; /* Reduzido de 1.5rem para evitar empurrar o card para fora das bordas */
     padding-bottom: 2rem;
+  }
+
+  .summary-graphic-card {
+    padding: 1.2rem; /* Reduzido de 2rem para dar mais espaço interno */
+  }
+
+  .graphic-title {
+    font-size: 1.4rem; /* Reduzido de 1.8rem para caber em telas estreitas */
+  }
+
+  .graphic-value-only-box .val-amount {
+    font-size: 1.8rem; /* Reduzido de 2.2rem para evitar quebra de linha de valores altos */
   }
 
   /* Alça visual no topo do modal mobile */
@@ -1387,6 +1400,31 @@ header {
   font-weight: 800;
   color: #2ecc71;
   text-shadow: 0 0 15px rgba(46, 204, 113, 0.3);
+}
+
+/* Rodapé Principal do site */
+.main-footer {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  border-top: 1px solid var(--glass-border);
+  margin-top: 3rem;
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.main-footer a {
+  color: var(--neon-blue);
+  text-decoration: none;
+  font-weight: 600;
+  transition: var(--transition-smooth);
+}
+
+.main-footer a:hover {
+  color: var(--text-primary);
+  text-shadow: 0 0 10px var(--neon-blue-glow);
 }
 
 
