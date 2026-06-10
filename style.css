@@ -1107,6 +1107,7 @@ header {
   /* Transforma a sidebar em Gaveta (Bottom Sheet) */
   .sidebar {
     position: fixed;
+    top: auto; /* Reseta o top: 2rem do desktop para evitar ancorar no topo */
     bottom: -110%; /* Escondido */
     left: 0;
     right: 0;
