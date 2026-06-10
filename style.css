@@ -859,6 +859,7 @@ header {
   display: none; /* Alterado para suportar abas de layout */
   flex-direction: column;
   gap: 1.5rem;
+  flex-shrink: 0; /* Impede que o flexbox encolha o card, evitando cortes de conteúdo */
 }
 
 .summary-graphic-card.active {
