@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calculadora de Valor Nintendo | Nintendo Worth Calculator</title>
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Estilos Customizados -->
+  <link rel="stylesheet" href="style.css">
+  
+  <!-- html2canvas para salvar o card resumo em imagem -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+</head>
+<body>
+
+  <div class="container">
+    
+    <!-- HEADER -->
+    <header>
+      <div class="logo-section">
+        <h1 id="site-logo-title">
+          <i class="fa-solid fa-gamepad" style="font-size: 2.2rem; transform: rotate(-10deg);"></i>
+          <span data-i18n="title">Calculadora de Valor Nintendo</span>
+        </h1>
+        <p data-i18n="subtitle">Calcule quanto vale sua conta com preços atualizados da eShop (Switch 1 & Switch 2)</p>
+      </div>
+      
+      <div class="controls-section">
+        <!-- Seletor de Idioma -->
+        <div class="lang-selector">
+          <button class="lang-btn active" data-lang="pt">PT</button>
+          <button class="lang-btn" data-lang="en">EN</button>
+        </div>
+        
+        <!-- Seletor de Moeda Principal -->
+        <div class="currency-selector">
+          <button class="currency-btn active" data-currency="BRL">R$ (BRL)</button>
+          <button class="currency-btn" data-currency="USD">$ (USD)</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- CATALOGO E FILTROS -->
+    <main class="main-content">
+      <!-- Busca e Filtros -->
+      <div class="search-container">
+        <div class="search-input-wrapper">
+          <i class="fas fa-search"></i>
+          <input type="text" id="search-input" data-i18n="placeholder" placeholder="Digite o nome do jogo (ex: Zelda, Mario, Metroid...)" autocomplete="off">
+        </div>
+        
+        <div class="filters-wrapper">
+          <button class="filter-btn active" data-platform="all">
+            <i class="fas fa-th-list"></i> <span data-i18n="filterAll">Todos</span>
+          </button>
+          <button class="filter-btn" data-platform="switch1">
+            <i class="fas fa-circle" style="color: var(--neon-red);"></i> <span data-i18n="filterSwitch1">Switch 1</span>
+          </button>
+          <button class="filter-btn" data-platform="switch2">
+            <i class="fas fa-circle" style="color: var(--neon-blue);"></i> <span data-i18n="filterSwitch2">Switch 2</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Grid de Jogos (Dinâmico) -->
+      <div class="games-grid" id="games-grid">
+        <!-- Renderizado dinamicamente pelo JS -->
+      </div>
+    </main>
+
+    <!-- SIDEBAR - PAINEL DA CALCULADORA -->
+    <aside class="sidebar">
+      <div class="calculator-panel">
+        <div class="panel-header">
+          <h2><i class="fas fa-wallet"></i> <span data-i18n="myAccount">Minha Conta</span></h2>
+          <button class="clear-all-btn" id="clear-all-btn" data-i18n="clearAll">Limpar tudo</button>
+        </div>
+
+        <!-- Lista de Jogos Selecionados -->
+        <div class="selected-list" id="selected-list">
+          <!-- Renderizado dinamicamente pelo JS -->
+        </div>
+
+        <!-- Nível do Jogador (Tier) -->
+        <div class="gamer-tier-box">
+          <div class="tier-title" data-i18n="gamerTier">Tier da Conta</div>
+          <div class="tier-badge" id="gamer-tier-badge" data-i18n="emptyAccount">Conta Vazia</div>
+        </div>
+
+        <!-- Rodapé do Painel (Resumo e Botão Compartilhar) -->
+        <div class="summary-section">
+          <div class="summary-row">
+            <span data-i18n="totalGames">Total de Jogos:</span>
+            <strong id="total-games-count">0</strong>
+          </div>
+          <div class="summary-row">
+            <span>Switch 1:</span>
+            <strong id="count-switch1" style="color: var(--neon-red);">0</strong>
+          </div>
+          <div class="summary-row">
+            <span>Switch 2:</span>
+            <strong id="count-switch2" style="color: var(--neon-blue);">0</strong>
+          </div>
+          
+          <div class="summary-row total-row">
+            <span data-i18n="totalCalculated">Total Calculado:</span>
+            <div style="display: flex; flex-direction: column; align-items: flex-end;">
+              <span id="total-value-brl" class="total-value-brl">R$ 0,00</span>
+              <span id="total-value-usd" style="font-size: 0.95rem; color: var(--text-secondary);">($ 0.00)</span>
+            </div>
+          </div>
+
+          <button class="share-btn" id="share-btn" data-i18n="shareSummary">
+            <i class="fas fa-share-alt"></i> Compartilhar Resumo
+          </button>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- MODAL DE COMPARTILHAMENTO -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3 data-i18n="modalTitle">Salvar Resumo</h3>
+        <button class="close-modal-btn" id="close-modal-btn">&times;</button>
+      </div>
+      <div class="modal-content">
+        <!-- Card Gráfico que será exportado para Imagem -->
+        <div class="summary-graphic-card" id="summary-graphic-card">
+          <div class="graphic-brand">Nintendo Worth Calculator</div>
+          <div class="graphic-title" data-i18n="graphicTitle">Minha Biblioteca Vale Muito!</div>
+          
+          <div class="graphic-stats">
+            <div class="stat-box">
+              <span class="stat-label" data-i18n="graphicTotalGames">Total de Jogos</span>
+              <span class="stat-value" id="graphic-total-games">0</span>
+            </div>
+            <div class="stat-box">
+              <span class="stat-label" data-i18n="graphicPlatforms">Plataformas</span>
+              <span class="stat-value" style="font-size: 1rem; margin-top: 0.4rem;">
+                <span style="color: var(--neon-red);">S1: <span id="graphic-switch1-count">0</span></span> | 
+                <span style="color: var(--neon-blue);">S2: <span id="graphic-switch2-count">0</span></span>
+              </span>
+            </div>
+            <div class="stat-box" style="grid-column: 1 / -1;">
+              <span class="stat-label" data-i18n="graphicValue">Valor Estimado</span>
+              <span class="stat-value value-total" id="graphic-total-value">R$ 0,00</span>
+            </div>
+            <div class="stat-box" style="grid-column: 1 / -1; margin-top: 0.5rem;">
+              <span class="stat-label" data-i18n="graphicTier">Categoria de Jogador</span>
+              <span class="stat-value" id="graphic-tier-badge" style="font-size: 1.5rem;">Gamer</span>
+            </div>
+          </div>
+          
+          <div class="graphic-footer">
+            <span data-i18n="graphicFooterDate">Calculado em Junho de 2026</span>
+            <span>nintendo-worth-calc.github.io</span>
+          </div>
+        </div>
+
+        <button class="download-image-btn" id="download-image-btn" data-i18n="downloadBtn">Baixar Card de Resumo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lógica do Aplicativo -->
+  <script src="app.js"></script>
+</body>
+</html>
