@@ -173,7 +173,9 @@ let state = {
   language: 'pt', // 'pt' ou 'en'
   exchangeRate: 5.40, // Taxa de conversão padrão USD -> BRL
   currentPlatformFilter: 'all', // 'all', 'switch1', 'switch2'
-  searchQuery: ''
+  searchQuery: '',
+  currentPage: 0,
+  totalPages: 1
 };
 
 // Elementos do DOM
@@ -297,7 +299,7 @@ function getGameBRLPrice(nsuid, usdPrice, regularUsdPrice = null) {
   return { value: estimatedBRL, isVerified: false };
 }
 
-// Busca em lote os preços em BRL oficiais da Nintendo API através de proxies CORS
+// Busca em lote os preços em BRL oficiais da Nintendo API através de proxies CORS ou Serverless Function
 async function fetchBRLPrices(nsuids) {
   loadBRLPriceCache();
   const now = Date.now();
@@ -319,52 +321,98 @@ async function fetchBRLPrices(nsuids) {
 
   for (const chunk of chunks) {
     const idsString = chunk.join(',');
-    const targetNintendoUrl = `https://api.ec.nintendo.com/v1/price?country=BR&lang=pt&ids=${idsString}`;
     let success = false;
 
-    for (const proxy of CORS_PROXIES) {
+    // Se não estivermos rodando localmente via protocolo file://, tentamos a Serverless Function do Vercel
+    if (window.location.protocol !== 'file:') {
       try {
-        console.log(`Buscando preços BRL via proxy: ${proxy.name}...`);
-        const proxyUrl = proxy.buildUrl(targetNintendoUrl);
+        console.log(`Buscando preços BRL via Vercel Serverless Function...`);
+        const targetUrl = `/api/price?ids=${idsString}`;
         
-        // Configura timeout de 6 segundos para evitar travar a requisição
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 6000);
         
-        const response = await fetch(proxyUrl, { signal: controller.signal });
+        const response = await fetch(targetUrl, { signal: controller.signal });
         clearTimeout(timeoutId);
         
-        if (!response.ok) throw new Error(`Status ${response.status}`);
-        
-        const rawData = await response.json();
-        const data = proxy.parseResponse(rawData);
+        if (response.ok) {
+          const data = await response.json();
+          if (data && data.prices && Array.isArray(data.prices)) {
+            data.prices.forEach(item => {
+              const nsuid = item.title_id;
+              let brlReg = null;
+              let brlDisc = null;
 
-        if (data && data.prices && Array.isArray(data.prices)) {
-          data.prices.forEach(item => {
-            const nsuid = item.title_id;
-            let brlReg = null;
-            let brlDisc = null;
+              if (item.regular_price) {
+                brlReg = parseFloat(item.regular_price.raw_value);
+              }
+              if (item.discount_price) {
+                brlDisc = parseFloat(item.discount_price.raw_value);
+              }
 
-            if (item.regular_price) {
-              brlReg = parseFloat(item.regular_price.raw_value);
-            }
-            if (item.discount_price) {
-              brlDisc = parseFloat(item.discount_price.raw_value);
-            }
-
-            brlPriceCache[nsuid] = {
-              brlPrice: brlReg,
-              brlDiscountPrice: brlDisc,
-              fetchedAt: now
-            };
-          });
-          
-          success = true;
-          console.log(`Preços BRL atualizados com sucesso via ${proxy.name}`);
-          break; // Sucesso com esse proxy, sai do loop de proxies para este chunk
+              brlPriceCache[nsuid] = {
+                brlPrice: brlReg,
+                brlDiscountPrice: brlDisc,
+                fetchedAt: now
+              };
+            });
+            
+            success = true;
+            console.log(`Preços BRL atualizados via Vercel Serverless Function`);
+          }
         }
       } catch (e) {
-        console.warn(`Erro no proxy ${proxy.name}:`, e.message || e);
+        console.warn(`Falha ao buscar via Vercel Serverless Function, tentando proxies CORS...`, e.message || e);
+      }
+    }
+
+    if (!success) {
+      // Fallback para proxies CORS públicos
+      const targetNintendoUrl = `https://api.ec.nintendo.com/v1/price?country=BR&lang=pt&ids=${idsString}`;
+      for (const proxy of CORS_PROXIES) {
+        try {
+          console.log(`Buscando preços BRL via proxy: ${proxy.name}...`);
+          const proxyUrl = proxy.buildUrl(targetNintendoUrl);
+          
+          // Configura timeout de 6 segundos para evitar travar a requisição
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 6000);
+          
+          const response = await fetch(proxyUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          
+          if (!response.ok) throw new Error(`Status ${response.status}`);
+          
+          const rawData = await response.json();
+          const data = proxy.parseResponse(rawData);
+
+          if (data && data.prices && Array.isArray(data.prices)) {
+            data.prices.forEach(item => {
+              const nsuid = item.title_id;
+              let brlReg = null;
+              let brlDisc = null;
+
+              if (item.regular_price) {
+                brlReg = parseFloat(item.regular_price.raw_value);
+              }
+              if (item.discount_price) {
+                brlDisc = parseFloat(item.discount_price.raw_value);
+              }
+
+              brlPriceCache[nsuid] = {
+                brlPrice: brlReg,
+                brlDiscountPrice: brlDisc,
+                fetchedAt: now
+              };
+            });
+            
+            success = true;
+            console.log(`Preços BRL atualizados com sucesso via ${proxy.name}`);
+            break; // Sucesso com esse proxy, sai do loop de proxies para este chunk
+          }
+        } catch (e) {
+          console.warn(`Erro no proxy ${proxy.name}:`, e.message || e);
+        }
       }
     }
 
@@ -421,7 +469,7 @@ function setupEventListeners() {
     clearTimeout(debounceTimer);
     state.searchQuery = e.target.value;
     debounceTimer = setTimeout(() => {
-      performSearch(state.searchQuery);
+      performSearch(state.searchQuery, 0);
     }, 450);
   });
 
@@ -431,7 +479,7 @@ function setupEventListeners() {
       filterBtns.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.currentPlatformFilter = btn.dataset.platform;
-      renderGamesGrid();
+      performSearch(state.searchQuery, 0);
     });
   });
 
@@ -494,17 +542,44 @@ function setupEventListeners() {
 
   // Baixar imagem do resumo usando html2canvas
   downloadImageBtn.addEventListener('click', downloadSummaryCard);
+
+  // Controle do Drawer Lateral no Mobile
+  const mobileViewCartBtn = document.getElementById('mobile-view-cart-btn');
+  const sidebar = document.querySelector('.sidebar');
+  const drawerOverlay = document.getElementById('drawer-overlay');
+
+  if (mobileViewCartBtn && sidebar && drawerOverlay) {
+    mobileViewCartBtn.addEventListener('click', () => {
+      sidebar.classList.toggle('active');
+      drawerOverlay.classList.toggle('active');
+    });
+
+    drawerOverlay.addEventListener('click', () => {
+      sidebar.classList.remove('active');
+      drawerOverlay.classList.remove('active');
+    });
+  }
 }
 
 // Busca na API do Algolia usando GET (evita problemas de CORS no protocolo file://)
-async function performSearch(query) {
+async function performSearch(query, page = 0) {
   renderLoading();
   
   const hitsPerPage = 40;
-  const facetFiltersEncoded = encodeURIComponent('[["topLevelCategory:Games"]]');
+  
+  // Monta filtros por plataforma para a API do Algolia
+  let facetFilters = [['topLevelCategory:Games']];
+  if (state.currentPlatformFilter === 'switch1') {
+    facetFilters.push(['platform:Nintendo Switch']);
+  } else if (state.currentPlatformFilter === 'switch2') {
+    facetFilters.push(['platform:Nintendo Switch 2']);
+  }
+  const facetFiltersEncoded = encodeURIComponent(JSON.stringify(facetFilters));
+  
   const url = `https://${ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/${ALGOLIA_INDEX}`
             + `?query=${encodeURIComponent(query)}`
             + `&hitsPerPage=${hitsPerPage}`
+            + `&page=${page}`
             + `&facetFilters=${facetFiltersEncoded}`
             + `&x-algolia-application-id=${ALGOLIA_APP_ID}`
             + `&x-algolia-api-key=${ALGOLIA_API_KEY}`;
@@ -512,6 +587,10 @@ async function performSearch(query) {
   try {
     const response = await fetch(url);
     const data = await response.json();
+    
+    // Atualiza estado de paginação
+    state.currentPage = data.page || 0;
+    state.totalPages = data.nbPages || 1;
     
     if (data.hits && data.hits.length > 0) {
       state.searchResults = data.hits.map(hit => {
@@ -524,33 +603,45 @@ async function performSearch(query) {
           platformName = 'Nintendo Switch 2';
         }
 
-        // Verifica se é lançamento futuro ou não disponível comercialmente ainda
-        let isSoon = false;
+        // Verifica se possui preço cadastrado na eShop US (regularPrice ou msrp)
+        let hasPrice = false;
+        let regPrice = null;
+        if (hit.eshopDetails && hit.eshopDetails.regularPrice !== null && hit.eshopDetails.regularPrice !== undefined) {
+          regPrice = hit.eshopDetails.regularPrice;
+          hasPrice = true;
+        } else if (hit.msrp !== null && hit.msrp !== undefined) {
+          regPrice = hit.msrp;
+          hasPrice = true;
+        } else if (hit.price && hit.price.regPrice !== null && hit.price.regPrice !== undefined) {
+          regPrice = hit.price.regPrice;
+          hasPrice = true;
+        }
+
+        // Verifica lançamento futuro
+        let isFutureRelease = false;
         const releaseDateStr = hit.releaseDate;
+        const now = new Date();
         if (releaseDateStr) {
           const releaseDate = new Date(releaseDateStr);
-          const now = new Date();
           if (releaseDate > now) {
-            isSoon = true;
+            isFutureRelease = true;
           }
         }
         
         let isPurchasable = hit.eshopDetails ? hit.eshopDetails.isPurchasable : true;
         let isPreorderable = hit.eshopDetails ? hit.eshopDetails.isPreorderable : false;
-        if (!isPurchasable && !isPreorderable) {
+        
+        // Só é considerado "Em breve" (sem preço) se NÃO tiver preço E (estiver no futuro ou não for comprável nem em pré-venda)
+        let isSoon = false;
+        if (!hasPrice && (isFutureRelease || (!isPurchasable && !isPreorderable))) {
           isSoon = true;
         }
 
-        // Recupera preço de forma segura (fallbacks para null/0)
-        let regPrice = null;
-        if (!isSoon) {
-          if (hit.eshopDetails && hit.eshopDetails.regularPrice !== null) {
-            regPrice = hit.eshopDetails.regularPrice;
-          } else if (hit.msrp !== null && hit.msrp !== undefined) {
-            regPrice = hit.msrp;
-          } else {
-            regPrice = 0;
-          }
+        // Se for classificado como Em breve, limpa o regPrice
+        if (isSoon) {
+          regPrice = null;
+        } else if (regPrice === null) {
+          regPrice = 0; // Fallback por segurança
         }
         
         let discPrice = (hit.eshopDetails && hit.eshopDetails.discountPrice !== null && !isSoon) ? hit.eshopDetails.discountPrice : null;
@@ -590,11 +681,13 @@ async function performSearch(query) {
           imageUrl: imageUrl,
           nsuid: hit.nsuid,
           itemType: itemType,
-          isSoon: isSoon
+          isSoon: isSoon,
+          isPreorder: isFutureRelease || isPreorderable
         };
       });
       
       renderGamesGrid();
+      renderPagination();
 
       // Busca os preços em BRL oficiais da eShop no background para os resultados encontrados
       const searchNsuids = state.searchResults.map(g => g.nsuid).filter(id => id);
@@ -605,10 +698,12 @@ async function performSearch(query) {
       }
     } else {
       renderEmptyState(translations[state.language].noResults);
+      renderPagination();
     }
   } catch (error) {
     console.error('Erro na chamada da API:', error);
     renderEmptyState(translations[state.language].errorConnection);
+    renderPagination();
   }
 }
 
@@ -620,6 +715,96 @@ function renderLoading() {
       <p>${translations[state.language].loading}</p>
     </div>
   `;
+}
+
+// Renderizar paginação na interface
+function renderPagination() {
+  const container = document.getElementById('pagination-container');
+  if (!container) return;
+  
+  if (state.totalPages <= 1) {
+    container.innerHTML = '';
+    return;
+  }
+  
+  container.innerHTML = '';
+  
+  // Botão Anterior
+  const prevBtn = document.createElement('button');
+  prevBtn.className = `page-btn ${state.currentPage === 0 ? 'disabled' : ''}`;
+  prevBtn.innerHTML = '<i class="fas fa-chevron-left"></i>';
+  prevBtn.disabled = state.currentPage === 0;
+  if (!prevBtn.disabled) {
+    prevBtn.addEventListener('click', () => {
+      performSearch(state.searchQuery, state.currentPage - 1);
+      scrollToSearchTop();
+    });
+  }
+  container.appendChild(prevBtn);
+  
+  // Exibição inteligente dos números de página
+  const maxPagesToShow = 5;
+  let startPage = Math.max(0, state.currentPage - Math.floor(maxPagesToShow / 2));
+  let endPage = Math.min(state.totalPages - 1, startPage + maxPagesToShow - 1);
+  
+  if (endPage - startPage + 1 < maxPagesToShow) {
+    startPage = Math.max(0, endPage - maxPagesToShow + 1);
+  }
+  
+  if (startPage > 0) {
+    container.appendChild(createPageBtn(0, '1'));
+    if (startPage > 1) {
+      const ellipsis = document.createElement('span');
+      ellipsis.className = 'page-ellipsis';
+      ellipsis.textContent = '...';
+      container.appendChild(ellipsis);
+    }
+  }
+  
+  for (let i = startPage; i <= endPage; i++) {
+    container.appendChild(createPageBtn(i, (i + 1).toString()));
+  }
+  
+  if (endPage < state.totalPages - 1) {
+    if (endPage < state.totalPages - 2) {
+      const ellipsis = document.createElement('span');
+      ellipsis.className = 'page-ellipsis';
+      ellipsis.textContent = '...';
+      container.appendChild(ellipsis);
+    }
+    container.appendChild(createPageBtn(state.totalPages - 1, state.totalPages.toString()));
+  }
+  
+  // Botão Próximo
+  const nextBtn = document.createElement('button');
+  nextBtn.className = `page-btn ${state.currentPage === state.totalPages - 1 ? 'disabled' : ''}`;
+  nextBtn.innerHTML = '<i class="fas fa-chevron-right"></i>';
+  nextBtn.disabled = state.currentPage === state.totalPages - 1;
+  if (!nextBtn.disabled) {
+    nextBtn.addEventListener('click', () => {
+      performSearch(state.searchQuery, state.currentPage + 1);
+      scrollToSearchTop();
+    });
+  }
+  container.appendChild(nextBtn);
+}
+
+function createPageBtn(pageIndex, label) {
+  const btn = document.createElement('button');
+  btn.className = `page-btn ${state.currentPage === pageIndex ? 'active' : ''}`;
+  btn.textContent = label;
+  btn.addEventListener('click', () => {
+    performSearch(state.searchQuery, pageIndex);
+    scrollToSearchTop();
+  });
+  return btn;
+}
+
+function scrollToSearchTop() {
+  const element = document.querySelector('.search-container');
+  if (element) {
+    element.scrollIntoView({ behavior: 'smooth' });
+  }
 }
 
 // Renderizar estado vazio
@@ -730,7 +915,7 @@ function renderGamesGrid() {
       }
     }
 
-    // Badge do Tipo de Produto (DLC, Upgrade, Bundle)
+    // Badge do Tipo de Produto (DLC, Upgrade, Bundle) ou Pré-venda
     let typeBadgeHTML = '';
     if (game.itemType === 'DLC') {
       typeBadgeHTML = `<span class="type-badge badge-dlc">${translations[lang].badgeDLC}</span>`;
@@ -738,6 +923,10 @@ function renderGamesGrid() {
       typeBadgeHTML = `<span class="type-badge badge-upgrade">${translations[lang].badgeUpgrade}</span>`;
     } else if (game.itemType === 'BUNDLE') {
       typeBadgeHTML = `<span class="type-badge badge-bundle">${translations[lang].badgeBundle}</span>`;
+    }
+
+    if (game.isPreorder && !game.isSoon) {
+      typeBadgeHTML += `<span class="type-badge badge-preorder">${lang === 'pt' ? 'Pré-venda' : 'Pre-order'}</span>`;
     }
 
     const platformBadgeText = game.platform === 'Nintendo Switch 2' ? 'Switch 2' : 'Switch 1';
@@ -1029,6 +1218,22 @@ function updateCalculations() {
   // Formata os totais
   totalValueUSD.textContent = `($ ${totalUSD.toFixed(2)} USD)`;
   totalValueBRL.textContent = `R$ ${totalBRL.toFixed(2)} BRL`;
+
+  // Atualizar barra de resumo flutuante do mobile
+  const mobileGamesCount = document.getElementById('mobile-games-count');
+  const mobileTotalVal = document.getElementById('mobile-total-val');
+  if (mobileGamesCount) {
+    mobileGamesCount.textContent = state.selectedGames.length;
+  }
+  if (mobileTotalVal) {
+    if (state.currency === 'BRL') {
+      mobileTotalVal.textContent = `R$ ${totalBRL.toFixed(2)}`;
+      mobileTotalVal.className = 'total-value-brl';
+    } else {
+      mobileTotalVal.textContent = `$${totalUSD.toFixed(2)}`;
+      mobileTotalVal.className = 'total-value';
+    }
+  }
 
   // Atualizar Nível de Jogador (Tier)
   const tier = calculateGamerTier(totalUSD);

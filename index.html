@@ -69,6 +69,9 @@
       <div class="games-grid" id="games-grid">
         <!-- Renderizado dinamicamente pelo JS -->
       </div>
+
+      <!-- Paginação -->
+      <div class="pagination-container" id="pagination-container"></div>
     </main>
 
     <!-- SIDEBAR - PAINEL DA CALCULADORA -->
@@ -120,6 +123,19 @@
       </div>
     </aside>
 
+  </div>
+
+  <!-- OVERLAY DO DRAWER (MOBILE) -->
+  <div class="drawer-overlay" id="drawer-overlay"></div>
+
+  <!-- BARRA DE RESUMO FLUTUANTE (MOBILE) -->
+  <div class="mobile-summary-bar" id="mobile-summary-bar">
+    <div class="mobile-summary-info">
+      <span id="mobile-games-count">0</span> jogos | <strong id="mobile-total-val" class="total-value-brl">R$ 0,00</strong>
+    </div>
+    <button class="mobile-view-cart-btn" id="mobile-view-cart-btn">
+      <i class="fas fa-wallet"></i> <span data-i18n="myAccount">Minha Conta</span>
+    </button>
   </div>
 
   <!-- MODAL DE COMPARTILHAMENTO -->
