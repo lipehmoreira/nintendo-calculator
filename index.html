@@ -146,8 +146,14 @@
         <button class="close-modal-btn" id="close-modal-btn">&times;</button>
       </div>
       <div class="modal-content">
-        <!-- Card Gráfico que será exportado para Imagem -->
-        <div class="summary-graphic-card" id="summary-graphic-card">
+        <!-- Seletores de Layout -->
+        <div class="share-layout-tabs">
+          <button class="share-tab-btn active" data-layout="stats" data-i18n="shareLayoutStats">Resumo Estatístico</button>
+          <button class="share-tab-btn" data-layout="covers" data-i18n="shareLayoutCovers">Capas e Valor</button>
+        </div>
+
+        <!-- Card Gráfico 1: Estatísticas (Padrão) -->
+        <div class="summary-graphic-card active" id="summary-graphic-card-stats">
           <div class="graphic-brand">Nintendo Worth Calculator</div>
           <div class="graphic-title" data-i18n="graphicTitle">Minha Biblioteca Vale Muito!</div>
           
@@ -171,6 +177,26 @@
               <span class="stat-label" data-i18n="graphicTier">Categoria de Jogador</span>
               <span class="stat-value" id="graphic-tier-badge" style="font-size: 1.5rem;">Gamer</span>
             </div>
+          </div>
+          
+          <div class="graphic-footer">
+            <span data-i18n="graphicFooterDate">Calculado em Junho de 2026</span>
+            <span>nintendo-worth-calc.github.io</span>
+          </div>
+        </div>
+
+        <!-- Card Gráfico 2: Capas e Valor (Novo) -->
+        <div class="summary-graphic-card" id="summary-graphic-card-covers">
+          <div class="graphic-brand">Nintendo Worth Calculator</div>
+          <div class="graphic-title" data-i18n="graphicTitle">Minha Biblioteca Nintendo</div>
+          
+          <div class="graphic-covers-grid" id="graphic-covers-grid">
+            <!-- Renderizado dinamicamente pelo JS -->
+          </div>
+          
+          <div class="graphic-value-only-box">
+            <span class="val-label" data-i18n="graphicValue">Valor Total</span>
+            <span class="val-amount id-brl" id="graphic-total-value-only">R$ 0,00</span>
           </div>
           
           <div class="graphic-footer">

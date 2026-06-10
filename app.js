@@ -50,7 +50,9 @@ const translations = {
     // Badges de Tipo de Produto (Encurtados para evitar sobreposição)
     badgeDLC: "DLC",
     badgeUpgrade: "Upgrade",
-    badgeBundle: "Pacote"
+    badgeBundle: "Pacote",
+    shareLayoutStats: "Resumo Estatístico",
+    shareLayoutCovers: "Capas e Valor"
   },
   en: {
     title: "Nintendo Worth Calculator",
@@ -97,7 +99,9 @@ const translations = {
     // Badges de Tipo de Produto
     badgeDLC: "DLC",
     badgeUpgrade: "Upgrade",
-    badgeBundle: "Bundle"
+    badgeBundle: "Bundle",
+    shareLayoutStats: "Stats Summary",
+    shareLayoutCovers: "Covers & Value"
   }
 };
 
@@ -542,6 +546,23 @@ function setupEventListeners() {
 
   // Baixar imagem do resumo usando html2canvas
   downloadImageBtn.addEventListener('click', downloadSummaryCard);
+
+  // Alternar layout de compartilhamento (Tabs)
+  const tabBtns = document.querySelectorAll('.share-tab-btn');
+  const cards = document.querySelectorAll('.summary-graphic-card');
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabBtns.forEach(b => b.classList.remove('active'));
+      cards.forEach(c => c.classList.remove('active'));
+      
+      btn.classList.add('active');
+      const selectedLayout = btn.dataset.layout;
+      const cardElement = document.getElementById(`summary-graphic-card-${selectedLayout}`);
+      if (cardElement) {
+        cardElement.classList.add('active');
+      }
+    });
+  });
 
   // Controle do Drawer Lateral no Mobile
   const mobileViewCartBtn = document.getElementById('mobile-view-cart-btn');
@@ -1298,6 +1319,16 @@ function openShareModal() {
     return;
   }
 
+  // 1. Reseta para o layout de estatísticas padrão ao abrir
+  const tabBtns = document.querySelectorAll('.share-tab-btn');
+  const cards = document.querySelectorAll('.summary-graphic-card');
+  tabBtns.forEach(b => b.classList.remove('active'));
+  cards.forEach(c => c.classList.remove('active'));
+  if (tabBtns[0]) tabBtns[0].classList.add('active');
+  const defaultCard = document.getElementById('summary-graphic-card-stats');
+  if (defaultCard) defaultCard.classList.add('active');
+
+  // 2. Preenche dados do Card 1 (Estatísticas)
   graphicTotalGames.textContent = state.selectedGames.length;
   graphicSwitch1Count.textContent = countSwitch1.textContent;
   graphicSwitch2Count.textContent = countSwitch2.textContent;
@@ -1314,14 +1345,41 @@ function openShareModal() {
   graphicTierBadge.style.webkitBackgroundClip = 'text';
   graphicTierBadge.style.webkitTextFillColor = 'transparent';
 
+  // 3. Preenche dados do Card 2 (Capas e Valor)
+  const graphicCoversGrid = document.getElementById('graphic-covers-grid');
+  if (graphicCoversGrid) {
+    graphicCoversGrid.innerHTML = '';
+    state.selectedGames.forEach(game => {
+      const img = document.createElement('img');
+      img.src = game.imageUrl;
+      img.alt = game.title;
+      img.className = `graphic-cover-item ${game.platform === 'Nintendo Switch 2' ? 's2' : 's1'}`;
+      img.title = game.title;
+      graphicCoversGrid.appendChild(img);
+    });
+  }
+
+  const graphicTotalValueOnly = document.getElementById('graphic-total-value-only');
+  if (graphicTotalValueOnly) {
+    if (state.currency === 'BRL') {
+      graphicTotalValueOnly.textContent = totalValueBRL.textContent;
+      graphicTotalValueOnly.className = 'val-amount total-value-brl';
+    } else {
+      graphicTotalValueOnly.textContent = totalValueUSD.textContent.replace('(', '').replace(')', '');
+      graphicTotalValueOnly.className = 'val-amount total-value';
+    }
+  }
+
   modalOverlay.classList.add('active');
 }
 
 // Baixar o card usando html2canvas
 function downloadSummaryCard() {
-  const cardElement = document.getElementById('summary-graphic-card');
+  const cardElement = document.querySelector('.summary-graphic-card.active');
   const lang = state.language;
   
+  if (!cardElement) return;
+
   const options = {
     useCORS: true,
     scale: 2, 
