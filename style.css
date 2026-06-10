@@ -221,6 +221,12 @@ header {
   -moz-appearance: none;
 }
 
+.select-wrapper select option {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+
 .select-wrapper::after {
   content: '\f0d7';
   font-family: 'Font Awesome 6 Free';

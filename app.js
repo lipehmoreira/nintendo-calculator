@@ -52,7 +52,15 @@ const translations = {
     badgeUpgrade: "Upgrade",
     badgeBundle: "Pacote",
     shareLayoutStats: "Resumo Estatístico",
-    shareLayoutCovers: "Capas e Valor"
+    shareLayoutCovers: "Capas e Valor",
+    filterExtraAll: "Filtro: Todos",
+    filterExtraSale: "Filtro: Promoção",
+    filterExtraPreorder: "Filtro: Pré-venda",
+    filterExtraFree: "Filtro: Grátis",
+    sortRelevance: "Ordenar: Relevância",
+    sortPriceAsc: "Preço: Menor ➡️ Maior",
+    sortPriceDesc: "Preço: Maior ➡️ Menor",
+    sortDiscountDesc: "Maior Desconto (%)"
   },
   en: {
     title: "Nintendo Worth Calculator",
@@ -101,7 +109,15 @@ const translations = {
     badgeUpgrade: "Upgrade",
     badgeBundle: "Bundle",
     shareLayoutStats: "Stats Summary",
-    shareLayoutCovers: "Covers & Value"
+    shareLayoutCovers: "Covers & Value",
+    filterExtraAll: "Filter: All",
+    filterExtraSale: "Filter: Sale",
+    filterExtraPreorder: "Filter: Pre-order",
+    filterExtraFree: "Filter: Free",
+    sortRelevance: "Sort: Relevance",
+    sortPriceAsc: "Price: Low ➡️ High",
+    sortPriceDesc: "Price: High ➡️ Low",
+    sortDiscountDesc: "Highest Discount (%)"
   }
 };
 
@@ -573,16 +589,17 @@ function setupEventListeners() {
   if (extraFilterSelect) {
     extraFilterSelect.addEventListener('change', (e) => {
       state.extraFilter = e.target.value;
-      renderGamesGrid();
+      performSearch(state.searchQuery, 0);
     });
   }
 
   if (sortSelect) {
     sortSelect.addEventListener('change', (e) => {
       state.sortBy = e.target.value;
-      renderGamesGrid();
+      performSearch(state.searchQuery, 0);
     });
   }
+
 
   // Controle do Drawer Lateral no Mobile
   const mobileViewCartBtn = document.getElementById('mobile-view-cart-btn');
@@ -608,6 +625,16 @@ async function performSearch(query, page = 0) {
   
   const hitsPerPage = 40;
   
+  // Determina o índice de acordo com a ordenação
+  let indexName = 'store_game_en_us_release_des';
+  if (state.sortBy === 'price_asc') {
+    indexName = 'store_game_en_us_price_asc';
+  } else if (state.sortBy === 'price_desc') {
+    indexName = 'store_game_en_us_price_des';
+  } else if (state.sortBy === 'discount_desc') {
+    indexName = 'store_game_en_us_percent_off_des';
+  }
+  
   // Monta filtros por plataforma para a API do Algolia
   let facetFilters = [['topLevelCategory:Games']];
   if (state.currentPlatformFilter === 'switch1') {
@@ -615,15 +642,31 @@ async function performSearch(query, page = 0) {
   } else if (state.currentPlatformFilter === 'switch2') {
     facetFilters.push(['platform:Nintendo Switch 2']);
   }
+
+  // Filtros extras da API
+  if (state.extraFilter === 'sale') {
+    facetFilters.push(['topLevelFilters:Deals']);
+  } else if (state.extraFilter === 'preorder') {
+    facetFilters.push(['availability:Pre-order']);
+  }
+
   const facetFiltersEncoded = encodeURIComponent(JSON.stringify(facetFilters));
   
-  const url = `https://${ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/${ALGOLIA_INDEX}`
+  // Filtros numéricos para jogos grátis
+  let numericFiltersParam = '';
+  if (state.extraFilter === 'free') {
+    numericFiltersParam = '&numericFilters=price.finalPrice=0';
+  }
+  
+  const url = `https://${ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/${indexName}`
             + `?query=${encodeURIComponent(query)}`
             + `&hitsPerPage=${hitsPerPage}`
             + `&page=${page}`
             + `&facetFilters=${facetFiltersEncoded}`
+            + numericFiltersParam
             + `&x-algolia-application-id=${ALGOLIA_APP_ID}`
             + `&x-algolia-api-key=${ALGOLIA_API_KEY}`;
+
 
   try {
     const response = await fetch(url);
@@ -886,23 +929,31 @@ function renderGamesGrid() {
   // 3. Ordenação Local
   if (state.sortBy === 'price_asc') {
     filtered.sort((a, b) => {
-      const priceA = a.isSoon ? Infinity : (a.discountPrice !== null ? a.discountPrice : a.regularPrice || 0);
-      const priceB = b.isSoon ? Infinity : (b.discountPrice !== null ? b.discountPrice : b.regularPrice || 0);
+      const priceA = a.isSoon ? Infinity : ((a.discountPrice !== null && a.discountPrice !== undefined) ? a.discountPrice : (a.regularPrice || 0));
+      const priceB = b.isSoon ? Infinity : ((b.discountPrice !== null && b.discountPrice !== undefined) ? b.discountPrice : (b.regularPrice || 0));
       return priceA - priceB;
     });
   } else if (state.sortBy === 'price_desc') {
     filtered.sort((a, b) => {
-      const priceA = a.isSoon ? -Infinity : (a.discountPrice !== null ? a.discountPrice : a.regularPrice || 0);
-      const priceB = b.isSoon ? -Infinity : (b.discountPrice !== null ? b.discountPrice : b.regularPrice || 0);
+      const priceA = a.isSoon ? -Infinity : ((a.discountPrice !== null && a.discountPrice !== undefined) ? a.discountPrice : (a.regularPrice || 0));
+      const priceB = b.isSoon ? -Infinity : ((b.discountPrice !== null && b.discountPrice !== undefined) ? b.discountPrice : (b.regularPrice || 0));
       return priceB - priceA;
     });
   } else if (state.sortBy === 'discount_desc') {
     filtered.sort((a, b) => {
-      const discPctA = (a.regularPrice && a.discountPrice !== null) ? ((a.regularPrice - a.discountPrice) / a.regularPrice) : 0;
-      const discPctB = (b.regularPrice && b.discountPrice !== null) ? ((b.regularPrice - b.discountPrice) / b.regularPrice) : 0;
-      return discPctB - discPctA;
+      const hasDiscA = a.discountPrice !== null && a.discountPrice !== undefined && a.regularPrice > 0;
+      const hasDiscB = b.discountPrice !== null && b.discountPrice !== undefined && b.regularPrice > 0;
+      
+      if (hasDiscA && !hasDiscB) return -1;
+      if (!hasDiscA && hasDiscB) return 1;
+      if (!hasDiscA && !hasDiscB) return 0;
+      
+      const pctA = (a.regularPrice - a.discountPrice) / a.regularPrice;
+      const pctB = (b.regularPrice - b.discountPrice) / b.regularPrice;
+      return pctB - pctA;
     });
   }
+
 
   if (filtered.length === 0) {
     gamesGrid.innerHTML = `
