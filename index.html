@@ -52,16 +52,40 @@
           <input type="text" id="search-input" data-i18n="placeholder" placeholder="Digite o nome do jogo (ex: Zelda, Mario, Metroid...)" autocomplete="off">
         </div>
         
-        <div class="filters-wrapper">
-          <button class="filter-btn active" data-platform="all">
-            <i class="fas fa-th-list"></i> <span data-i18n="filterAll">Todos</span>
-          </button>
-          <button class="filter-btn" data-platform="switch1">
-            <i class="fas fa-circle" style="color: var(--neon-red);"></i> <span data-i18n="filterSwitch1">Switch 1</span>
-          </button>
-          <button class="filter-btn" data-platform="switch2">
-            <i class="fas fa-circle" style="color: var(--neon-blue);"></i> <span data-i18n="filterSwitch2">Switch 2</span>
-          </button>
+        <div class="filters-row">
+          <div class="filters-wrapper">
+            <button class="filter-btn active" data-platform="all">
+              <i class="fas fa-th-list"></i> <span data-i18n="filterAll">Todos</span>
+            </button>
+            <button class="filter-btn" data-platform="switch1">
+              <i class="fas fa-circle" style="color: var(--neon-red);"></i> <span data-i18n="filterSwitch1">Switch 1</span>
+            </button>
+            <button class="filter-btn" data-platform="switch2">
+              <i class="fas fa-circle" style="color: var(--neon-blue);"></i> <span data-i18n="filterSwitch2">Switch 2</span>
+            </button>
+          </div>
+
+          <div class="extra-filters-wrapper">
+            <div class="select-wrapper">
+              <i class="fas fa-filter"></i>
+              <select id="extra-filter-select">
+                <option value="all">Filtro: Todos</option>
+                <option value="sale">Filtro: Promoção</option>
+                <option value="preorder">Filtro: Pré-venda</option>
+                <option value="free">Filtro: Grátis</option>
+              </select>
+            </div>
+
+            <div class="select-wrapper">
+              <i class="fas fa-sort"></i>
+              <select id="sort-select">
+                <option value="relevance">Ordenar: Relevância</option>
+                <option value="price_asc">Preço: Menor ➡️ Maior</option>
+                <option value="price_desc">Preço: Maior ➡️ Menor</option>
+                <option value="discount_desc">Maior Desconto (%)</option>
+              </select>
+            </div>
+          </div>
         </div>
       </div>
 

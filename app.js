@@ -179,7 +179,9 @@ let state = {
   currentPlatformFilter: 'all', // 'all', 'switch1', 'switch2'
   searchQuery: '',
   currentPage: 0,
-  totalPages: 1
+  totalPages: 1,
+  extraFilter: 'all', // 'all', 'sale', 'preorder', 'free'
+  sortBy: 'relevance' // 'relevance', 'price_asc', 'price_desc', 'discount_desc'
 };
 
 // Elementos do DOM
@@ -564,6 +566,24 @@ function setupEventListeners() {
     });
   });
 
+  // Filtros Extras e Ordenação do Catálogo
+  const extraFilterSelect = document.getElementById('extra-filter-select');
+  const sortSelect = document.getElementById('sort-select');
+
+  if (extraFilterSelect) {
+    extraFilterSelect.addEventListener('change', (e) => {
+      state.extraFilter = e.target.value;
+      renderGamesGrid();
+    });
+  }
+
+  if (sortSelect) {
+    sortSelect.addEventListener('change', (e) => {
+      state.sortBy = e.target.value;
+      renderGamesGrid();
+    });
+  }
+
   // Controle do Drawer Lateral no Mobile
   const mobileViewCartBtn = document.getElementById('mobile-view-cart-btn');
   const sidebar = document.querySelector('.sidebar');
@@ -846,13 +866,43 @@ function renderGamesGrid() {
     return;
   }
 
-  // Filtragem
-  const filtered = state.searchResults.filter(game => {
+  // 1. Filtragem por Plataforma
+  let filtered = state.searchResults.filter(game => {
     if (state.currentPlatformFilter === 'all') return true;
     if (state.currentPlatformFilter === 'switch1') return game.platform === 'Nintendo Switch';
     if (state.currentPlatformFilter === 'switch2') return game.platform === 'Nintendo Switch 2';
     return true;
   });
+
+  // 2. Filtragem Extra (Promoção, Pré-venda, Grátis)
+  if (state.extraFilter === 'sale') {
+    filtered = filtered.filter(g => g.discountPrice !== null && g.discountPrice !== undefined);
+  } else if (state.extraFilter === 'preorder') {
+    filtered = filtered.filter(g => g.isPreorder && !g.isSoon);
+  } else if (state.extraFilter === 'free') {
+    filtered = filtered.filter(g => g.regularPrice === 0 && !g.isSoon);
+  }
+
+  // 3. Ordenação Local
+  if (state.sortBy === 'price_asc') {
+    filtered.sort((a, b) => {
+      const priceA = a.isSoon ? Infinity : (a.discountPrice !== null ? a.discountPrice : a.regularPrice || 0);
+      const priceB = b.isSoon ? Infinity : (b.discountPrice !== null ? b.discountPrice : b.regularPrice || 0);
+      return priceA - priceB;
+    });
+  } else if (state.sortBy === 'price_desc') {
+    filtered.sort((a, b) => {
+      const priceA = a.isSoon ? -Infinity : (a.discountPrice !== null ? a.discountPrice : a.regularPrice || 0);
+      const priceB = b.isSoon ? -Infinity : (b.discountPrice !== null ? b.discountPrice : b.regularPrice || 0);
+      return priceB - priceA;
+    });
+  } else if (state.sortBy === 'discount_desc') {
+    filtered.sort((a, b) => {
+      const discPctA = (a.regularPrice && a.discountPrice !== null) ? ((a.regularPrice - a.discountPrice) / a.regularPrice) : 0;
+      const discPctB = (b.regularPrice && b.discountPrice !== null) ? ((b.regularPrice - b.discountPrice) / b.regularPrice) : 0;
+      return discPctB - discPctA;
+    });
+  }
 
   if (filtered.length === 0) {
     gamesGrid.innerHTML = `
