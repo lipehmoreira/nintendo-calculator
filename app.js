@@ -388,6 +388,10 @@ async function fetchBRLPrices(nsuids) {
                 brlDiscountPrice: brlDisc,
                 fetchedAt: now
               };
+              
+              // Grava no Supabase em background
+              const currentBRL = brlDisc !== null ? brlDisc : brlReg;
+              recordPriceHistoryForNsuid(nsuid, currentBRL);
             });
             
             success = true;
@@ -437,6 +441,10 @@ async function fetchBRLPrices(nsuids) {
                 brlDiscountPrice: brlDisc,
                 fetchedAt: now
               };
+              
+              // Grava no Supabase em background
+              const currentBRL = brlDisc !== null ? brlDisc : brlReg;
+              recordPriceHistoryForNsuid(nsuid, currentBRL);
             });
             
             success = true;
@@ -1854,14 +1862,46 @@ function openGameDetailsModal(game) {
   // Mostrar modal
   detailsOverlay.classList.add('active');
 
-  // Desenha o gráfico de preços
+  // Desenha o gráfico de preços (Busca no Supabase)
   const currentPriceVal = game.discountPrice !== null && game.discountPrice !== undefined ? game.discountPrice : game.regularPrice;
-  const historyData = getPriceHistory(game.id, currentPriceVal, game.regularPrice);
   
-  // Pequeno timeout para dar tempo da animação do modal concluir antes de desenhar o canvas
-  setTimeout(() => {
-    renderPriceHistoryChart(game, historyData);
-  }, 150);
+  fetch(`/api/history?game_id=${encodeURIComponent(game.id)}`)
+    .then(res => res.json())
+    .then(data => {
+      let historyData = [];
+      if (data && data.history && data.history.length > 0) {
+        historyData = data.history.map(item => {
+          const parts = item.date.split('-');
+          const dateStr = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : item.date;
+          return {
+            date: dateStr,
+            price: state.currency === 'BRL' ? (item.brl_price || getGameBRLPrice(game.nsuid, item.usd_price).value) : (item.usd_price || 0)
+          };
+        });
+      }
+      
+      // Se tivermos menos de 4 registros, complementamos com histórico retroativo simulado para fins estéticos
+      if (historyData.length < 4) {
+        const mockPoints = generateMockPriceHistory(currentPriceVal, game.regularPrice);
+        mockPoints.pop(); // Remove o ponto de hoje para não duplicar
+        
+        const formattedMockPoints = mockPoints.map(p => {
+          return {
+            date: p.date,
+            price: state.currency === 'BRL' ? getGameBRLPrice(game.nsuid, p.price).value : p.price
+          };
+        });
+        
+        historyData = [...formattedMockPoints, ...historyData];
+      }
+      
+      renderPriceHistoryChart(game, historyData);
+    })
+    .catch(err => {
+      console.warn('Erro ao obter histórico do Supabase, usando fallback local:', err);
+      const localHistory = getPriceHistory(game.id, currentPriceVal, game.regularPrice);
+      renderPriceHistoryChart(game, localHistory);
+    });
 }
 
 // Atualiza o estado dos botões do modal de detalhes
@@ -1999,5 +2039,26 @@ function renderPriceHistoryChart(game, historyData) {
       }
     }
   });
+}
+
+// Registra o preço de um jogo no Supabase
+function recordPriceHistoryForNsuid(nsuid, brlPrice) {
+  const game = state.searchResults.find(g => g.nsuid === nsuid) || state.selectedGames.find(g => g.nsuid === nsuid);
+  if (!game) return;
+
+  const usdPrice = game.discountPrice !== null && game.discountPrice !== undefined ? game.discountPrice : game.regularPrice;
+  
+  fetch('/api/record-price', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      game_id: game.id,
+      nsuid: game.nsuid,
+      usd_price: usdPrice,
+      brl_price: brlPrice
+    })
+  }).catch(err => console.warn('Erro ao registrar histórico no Supabase:', err));
 }
 
