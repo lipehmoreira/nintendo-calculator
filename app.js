@@ -60,7 +60,12 @@ const translations = {
     sortRelevance: "Ordenar: Relevância",
     sortPriceAsc: "Preço: Menor ➡️ Maior",
     sortPriceDesc: "Preço: Maior ➡️ Menor",
-    sortDiscountDesc: "Maior Desconto (%)"
+    sortDiscountDesc: "Maior Desconto (%)",
+    filterFavorites: "Favoritos",
+    detailsModalTitle: "Detalhes do Jogo",
+    addToAccount: "Adicionar à Conta",
+    favorite: "Favorito",
+    priceHistory: "Histórico de Preços"
   },
   en: {
     title: "Nintendo Worth Calculator",
@@ -117,7 +122,12 @@ const translations = {
     sortRelevance: "Sort: Relevance",
     sortPriceAsc: "Price: Low ➡️ High",
     sortPriceDesc: "Price: High ➡️ Low",
-    sortDiscountDesc: "Highest Discount (%)"
+    sortDiscountDesc: "Highest Discount (%)",
+    filterFavorites: "Favorites",
+    detailsModalTitle: "Game Details",
+    addToAccount: "Add to Account",
+    favorite: "Favorite",
+    priceHistory: "Price History"
   }
 };
 
@@ -189,10 +199,11 @@ const CORS_PROXIES = [
 let state = {
   searchResults: [],
   selectedGames: [], // Itens: { id, title, platform, price, originalPrice, currency, mode, customPrice, image }
+  favorites: [], // Itens favoritados
   currency: 'BRL', // 'USD' ou 'BRL'
   language: 'pt', // 'pt' ou 'en'
   exchangeRate: 5.40, // Taxa de conversão padrão USD -> BRL
-  currentPlatformFilter: 'all', // 'all', 'switch1', 'switch2'
+  currentPlatformFilter: 'all', // 'all', 'switch1', 'switch2', 'favorites'
   searchQuery: '',
   currentPage: 0,
   totalPages: 1,
@@ -617,10 +628,25 @@ function setupEventListeners() {
       drawerOverlay.classList.remove('active');
     });
   }
+
+  // Modal de Detalhes do Jogo
+  const closeDetailsBtn = document.getElementById('close-details-btn');
+  const detailsOverlay = document.getElementById('game-details-overlay');
+  if (closeDetailsBtn && detailsOverlay) {
+    closeDetailsBtn.addEventListener('click', () => detailsOverlay.classList.remove('active'));
+    detailsOverlay.addEventListener('click', (e) => {
+      if (e.target === detailsOverlay) detailsOverlay.classList.remove('active');
+    });
+  }
 }
 
 // Busca na API do Algolia usando GET (evita problemas de CORS no protocolo file://)
 async function performSearch(query, page = 0) {
+  if (state.currentPlatformFilter === 'favorites') {
+    renderFavoritesLocal(query, page);
+    return;
+  }
+
   renderLoading();
   
   const hitsPerPage = 40;
@@ -970,6 +996,7 @@ function renderGamesGrid() {
 
   filtered.forEach(game => {
     const isSelected = state.selectedGames.some(g => g.id === game.id);
+    const isFavorite = state.favorites.some(g => g.id === game.id);
     const card = document.createElement('div');
     
     // Classes de plataforma para bordas coloridas neon
@@ -1061,6 +1088,9 @@ function renderGamesGrid() {
           ${typeBadgeHTML}
           <span class="platform-badge ${badgeClass}">${platformBadgeText}</span>
         </div>
+        <button class="favorite-btn ${isFavorite ? 'active' : ''}" aria-label="Favoritar">
+          <i class="${isFavorite ? 'fa-solid' : 'fa-regular'} fa-heart"></i>
+        </button>
         <img src="${game.imageUrl}" alt="${game.title}" loading="lazy">
       </div>
       <div class="card-content">
@@ -1074,8 +1104,23 @@ function renderGamesGrid() {
       </div>
     `;
 
-    card.addEventListener('click', (e) => {
+    // Interrompe propagação ao clicar no botão de adicionar
+    const addBtn = card.querySelector('.add-btn');
+    addBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
       toggleSelectGame(game);
+    });
+
+    // Interrompe propagação ao clicar no botão de favoritar
+    const favBtn = card.querySelector('.favorite-btn');
+    favBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleFavoriteGame(game);
+    });
+
+    // Clicar no resto do card abre o modal de detalhes
+    card.addEventListener('click', (e) => {
+      openGameDetailsModal(game);
     });
 
     gamesGrid.appendChild(card);
@@ -1387,10 +1432,23 @@ function calculateGamerTier(totalUSD) {
 // Persistência em LocalStorage
 function saveToLocalStorage() {
   localStorage.setItem('nintendo_selected_games', JSON.stringify(state.selectedGames));
+  localStorage.setItem('nintendo_favorites', JSON.stringify(state.favorites));
 }
 
 function loadFromLocalStorage() {
   loadBRLPriceCache();
+  
+  // Carregar favoritos
+  const favData = localStorage.getItem('nintendo_favorites');
+  if (favData) {
+    try {
+      state.favorites = JSON.parse(favData);
+    } catch (e) {
+      console.error('Erro ao ler favoritos do localStorage:', e);
+      state.favorites = [];
+    }
+  }
+
   const data = localStorage.getItem('nintendo_selected_games');
   if (data) {
     try {
@@ -1508,3 +1566,438 @@ function downloadSummaryCard() {
       downloadImageBtn.disabled = false;
     });
 }
+
+// --- SISTEMA DE FAVORITOS E HISTÓRICO DE PREÇOS ---
+
+let priceChartInstance = null;
+const PRICE_HISTORY_KEY = 'nintendo_price_history';
+
+// Renderiza a listagem local dos favoritos
+function renderFavoritesLocal(query, page = 0) {
+  let filtered = [...state.favorites];
+  
+  // 1. Filtragem por busca textual
+  if (query) {
+    const q = query.toLowerCase();
+    filtered = filtered.filter(g => g.title.toLowerCase().includes(q));
+  }
+  
+  // 2. Filtros extras (Promoção, Pré-venda, Grátis)
+  if (state.extraFilter === 'sale') {
+    filtered = filtered.filter(g => g.discountPrice !== null && g.discountPrice !== undefined);
+  } else if (state.extraFilter === 'preorder') {
+    filtered = filtered.filter(g => g.isPreorder && !g.isSoon);
+  } else if (state.extraFilter === 'free') {
+    filtered = filtered.filter(g => g.regularPrice === 0 && !g.isSoon);
+  }
+  
+  // 3. Ordenação local
+  if (state.sortBy === 'price_asc') {
+    filtered.sort((a, b) => {
+      const priceA = a.isSoon ? Infinity : ((a.discountPrice !== null && a.discountPrice !== undefined) ? a.discountPrice : (a.regularPrice || 0));
+      const priceB = b.isSoon ? Infinity : ((b.discountPrice !== null && b.discountPrice !== undefined) ? b.discountPrice : (b.regularPrice || 0));
+      return priceA - priceB;
+    });
+  } else if (state.sortBy === 'price_desc') {
+    filtered.sort((a, b) => {
+      const priceA = a.isSoon ? -Infinity : ((a.discountPrice !== null && a.discountPrice !== undefined) ? a.discountPrice : (a.regularPrice || 0));
+      const priceB = b.isSoon ? -Infinity : ((b.discountPrice !== null && b.discountPrice !== undefined) ? b.discountPrice : (b.regularPrice || 0));
+      return priceB - priceA;
+    });
+  } else if (state.sortBy === 'discount_desc') {
+    filtered.sort((a, b) => {
+      const hasDiscA = a.discountPrice !== null && a.discountPrice !== undefined && a.regularPrice > 0;
+      const hasDiscB = b.discountPrice !== null && b.discountPrice !== undefined && b.regularPrice > 0;
+      
+      if (hasDiscA && !hasDiscB) return -1;
+      if (!hasDiscA && hasDiscB) return 1;
+      if (!hasDiscA && !hasDiscB) return 0;
+      
+      const pctA = (a.regularPrice - a.discountPrice) / a.regularPrice;
+      const pctB = (b.regularPrice - b.discountPrice) / b.regularPrice;
+      return pctB - pctA;
+    });
+  }
+
+  // 4. Paginação dos favoritos
+  const hitsPerPage = 40;
+  state.currentPage = page;
+  state.totalPages = Math.ceil(filtered.length / hitsPerPage) || 1;
+  
+  const start = page * hitsPerPage;
+  const end = start + hitsPerPage;
+  state.searchResults = filtered.slice(start, end);
+  
+  if (state.searchResults.length > 0) {
+    renderGamesGrid();
+  } else {
+    const emptyMsg = query 
+      ? translations[state.language].noResults 
+      : (state.language === 'pt' ? 'Nenhum jogo nos favoritos ainda.' : 'No games in favorites yet.');
+    renderEmptyState(emptyMsg);
+  }
+  renderPagination();
+}
+
+// Adiciona ou remove jogo da lista de favoritos
+function toggleFavoriteGame(game) {
+  const index = state.favorites.findIndex(g => g.id === game.id);
+  
+  if (index >= 0) {
+    state.favorites.splice(index, 1);
+  } else {
+    state.favorites.push({
+      id: game.id,
+      title: game.title,
+      platform: game.platform,
+      regularPrice: game.regularPrice,
+      discountPrice: game.discountPrice,
+      imageUrl: game.imageUrl,
+      nsuid: game.nsuid,
+      itemType: game.itemType,
+      isSoon: game.isSoon,
+      isPreorder: game.isPreorder
+    });
+  }
+  
+  saveToLocalStorage();
+  
+  if (state.currentPlatformFilter === 'favorites') {
+    performSearch(state.searchQuery, state.currentPage);
+  } else {
+    renderGamesGrid();
+  }
+}
+
+// Obtém o histórico de preços do LocalStorage (ou gera se for o primeiro acesso)
+function getPriceHistory(gameId, currentPrice, regularPrice) {
+  let history = {};
+  const saved = localStorage.getItem(PRICE_HISTORY_KEY);
+  if (saved) {
+    try {
+      history = JSON.parse(saved);
+    } catch (e) {
+      console.error('Erro ao processar histórico de preços:', e);
+    }
+  }
+
+  if (!history[gameId]) {
+    history[gameId] = generateMockPriceHistory(currentPrice, regularPrice);
+    localStorage.setItem(PRICE_HISTORY_KEY, JSON.stringify(history));
+  } else {
+    // Registra o preço de hoje caso mude ou em um novo dia
+    const gameHistory = history[gameId];
+    const todayStr = new Date().toLocaleDateString('pt-BR');
+    const lastEntry = gameHistory[gameHistory.length - 1];
+    
+    if (!lastEntry || lastEntry.price !== currentPrice || lastEntry.date !== todayStr) {
+      if (lastEntry && lastEntry.date === todayStr) {
+        lastEntry.price = currentPrice;
+      } else {
+        gameHistory.push({
+          date: todayStr,
+          price: currentPrice
+        });
+      }
+      if (gameHistory.length > 10) {
+        gameHistory.shift();
+      }
+      localStorage.setItem(PRICE_HISTORY_KEY, JSON.stringify(history));
+    }
+  }
+
+  return history[gameId];
+}
+
+// Gera histórico realista simulado dos últimos 3 meses
+function generateMockPriceHistory(currentPrice, regularPrice) {
+  const history = [];
+  const basePrice = regularPrice !== null && regularPrice !== undefined ? regularPrice : (currentPrice || 0);
+  const now = new Date();
+  
+  // Ponto 1: 3 meses atrás (preço regular)
+  const date1 = new Date(now);
+  date1.setMonth(now.getMonth() - 3);
+  history.push({ date: date1.toLocaleDateString('pt-BR'), price: basePrice });
+  
+  // Ponto 2: 2 meses atrás (preço simulado em promoção se o jogo tiver desconto, ou 30% off aleatório)
+  const date2 = new Date(now);
+  date2.setMonth(now.getMonth() - 2);
+  const discountVal = (currentPrice < basePrice) ? currentPrice : basePrice * 0.7;
+  history.push({ date: date2.toLocaleDateString('pt-BR'), price: discountVal });
+
+  // Ponto 3: 1 mês atrás (retorno ao preço regular)
+  const date3 = new Date(now);
+  date3.setMonth(now.getMonth() - 1);
+  history.push({ date: date3.toLocaleDateString('pt-BR'), price: basePrice });
+
+  // Ponto 4: Hoje (preço atual)
+  history.push({ date: now.toLocaleDateString('pt-BR'), price: currentPrice || 0 });
+
+  return history;
+}
+
+// Abre o Modal de Detalhes do Jogo
+function openGameDetailsModal(game) {
+  const detailsOverlay = document.getElementById('game-details-overlay');
+  if (!detailsOverlay) return;
+  
+  document.getElementById('details-game-img').src = game.imageUrl;
+  document.getElementById('details-game-title').textContent = game.title;
+  
+  const platBadge = document.getElementById('details-platform-badge');
+  platBadge.textContent = game.platform === 'Nintendo Switch 2' ? 'Switch 2' : 'Switch 1';
+  platBadge.className = `platform-badge ${game.platform === 'Nintendo Switch 2' ? 'badge-switch2' : 'badge-switch1'}`;
+  
+  const typeBadge = document.getElementById('details-type-badge');
+  const lang = state.language;
+  if (game.itemType === 'DLC') {
+    typeBadge.textContent = translations[lang].badgeDLC;
+    typeBadge.className = 'type-badge badge-dlc';
+    typeBadge.style.display = 'inline-block';
+  } else if (game.itemType === 'UPGRADE') {
+    typeBadge.textContent = translations[lang].badgeUpgrade;
+    typeBadge.className = 'type-badge badge-upgrade';
+    typeBadge.style.display = 'inline-block';
+  } else if (game.itemType === 'BUNDLE') {
+    typeBadge.textContent = translations[lang].badgeBundle;
+    typeBadge.className = 'type-badge badge-bundle';
+    typeBadge.style.display = 'inline-block';
+  } else {
+    typeBadge.style.display = 'none';
+  }
+
+  // Bloco de preços
+  const priceBox = document.getElementById('details-price-box');
+  const hasDiscount = game.discountPrice !== null && game.discountPrice !== undefined;
+  let priceHTML = '';
+  
+  if (game.isSoon) {
+    priceHTML = `<span class="card-price" style="color: var(--text-secondary); font-size: 1.2rem; font-weight:500;">${translations[lang].soon}</span>`;
+  } else if (game.regularPrice === 0) {
+    priceHTML = `<span class="card-price" style="font-size: 1.4rem;">${translations[lang].free}</span>`;
+  } else {
+    if (state.currency === 'BRL') {
+      const regBRL = getGameBRLPrice(game.nsuid, game.regularPrice);
+      const regularFormatted = `R$ ${regBRL.value.toFixed(2)}`;
+      
+      let discountFormatted = '';
+      let discBRL = null;
+      if (hasDiscount) {
+        discBRL = getGameBRLPrice(game.nsuid, game.discountPrice, game.regularPrice);
+        discountFormatted = `R$ ${discBRL.value.toFixed(2)}`;
+      }
+      
+      const isVerified = regBRL.isVerified && (!hasDiscount || discBRL.isVerified);
+      const badgeHTML = isVerified 
+        ? `<span class="price-badge verified" title="Preço oficial da eShop BR"><i class="fas fa-check-circle"></i> BR</span>`
+        : `<span class="price-badge estimated" title="Preço estimado"><i class="fas fa-exclamation-circle"></i> ~est</span>`;
+
+      if (hasDiscount) {
+        priceHTML = `
+          <div class="price-wrapper" style="font-size: 1.4rem;">
+            <span class="card-price discounted" style="font-size: 1.4rem;">
+              <span class="original-price-strike" style="font-size: 1.1rem; margin-right: 0.6rem;">${regularFormatted}</span>
+              ${discountFormatted}
+            </span>
+            ${badgeHTML}
+          </div>
+        `;
+      } else {
+        priceHTML = `
+          <div class="price-wrapper" style="font-size: 1.4rem;">
+            <span class="card-price" style="font-size: 1.4rem;">${regularFormatted}</span>
+            ${badgeHTML}
+          </div>
+        `;
+      }
+    } else {
+      const regularFormatted = `$${game.regularPrice.toFixed(2)}`;
+      const discountFormatted = hasDiscount ? `$${game.discountPrice.toFixed(2)}` : '';
+      
+      if (hasDiscount) {
+        priceHTML = `
+          <span class="card-price discounted" style="font-size: 1.4rem;">
+            <span class="original-price-strike" style="font-size: 1.1rem; margin-right: 0.6rem;">${regularFormatted}</span>
+            ${discountFormatted}
+          </span>
+        `;
+      } else {
+        priceHTML = `<span class="card-price" style="font-size: 1.4rem;">${regularFormatted}</span>`;
+      }
+    }
+  }
+  priceBox.innerHTML = priceHTML;
+
+  // Botões de Ação no modal
+  const addBtn = document.getElementById('details-add-btn');
+  const favBtn = document.getElementById('details-fav-btn');
+  
+  // Clona botões para remover event listeners antigos
+  const newAddBtn = addBtn.cloneNode(true);
+  const newFavBtn = favBtn.cloneNode(true);
+  addBtn.parentNode.replaceChild(newAddBtn, addBtn);
+  favBtn.parentNode.replaceChild(newFavBtn, favBtn);
+  
+  updateDetailsModalButtons(game);
+  
+  newAddBtn.addEventListener('click', () => {
+    toggleSelectGame(game);
+    updateDetailsModalButtons(game);
+  });
+  
+  newFavBtn.addEventListener('click', () => {
+    toggleFavoriteGame(game);
+    updateDetailsModalButtons(game);
+  });
+
+  // Mostrar modal
+  detailsOverlay.classList.add('active');
+
+  // Desenha o gráfico de preços
+  const currentPriceVal = game.discountPrice !== null && game.discountPrice !== undefined ? game.discountPrice : game.regularPrice;
+  const historyData = getPriceHistory(game.id, currentPriceVal, game.regularPrice);
+  
+  // Pequeno timeout para dar tempo da animação do modal concluir antes de desenhar o canvas
+  setTimeout(() => {
+    renderPriceHistoryChart(game, historyData);
+  }, 150);
+}
+
+// Atualiza o estado dos botões do modal de detalhes
+function updateDetailsModalButtons(game) {
+  const addBtn = document.getElementById('details-add-btn');
+  const favBtn = document.getElementById('details-fav-btn');
+  if (!addBtn || !favBtn) return;
+  
+  const isSelected = state.selectedGames.some(g => g.id === game.id);
+  const isFav = state.favorites.some(g => g.id === game.id);
+  const lang = state.language;
+  
+  if (isSelected) {
+    addBtn.className = 'details-action-btn active-added';
+    addBtn.innerHTML = `<i class="fas fa-check"></i> <span>${lang === 'pt' ? 'Adicionado à Conta' : 'Added to Account'}</span>`;
+  } else {
+    addBtn.className = 'details-action-btn';
+    addBtn.innerHTML = `<i class="fas fa-plus"></i> <span>${lang === 'pt' ? 'Adicionar à Conta' : 'Add to Account'}</span>`;
+  }
+  
+  if (isFav) {
+    favBtn.className = 'details-action-btn fav-action active-fav';
+    favBtn.innerHTML = `<i class="fas fa-heart"></i> <span>${lang === 'pt' ? 'Favoritado' : 'Favorited'}</span>`;
+  } else {
+    favBtn.className = 'details-action-btn fav-action';
+    favBtn.innerHTML = `<i class="far fa-heart"></i> <span>${lang === 'pt' ? 'Favoritar' : 'Favorite'}</span>`;
+  }
+}
+
+// Renderiza o gráfico do histórico de preços com Chart.js
+function renderPriceHistoryChart(game, historyData) {
+  const canvas = document.getElementById('priceHistoryChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  
+  if (priceChartInstance) {
+    priceChartInstance.destroy();
+  }
+  
+  if (game.isSoon) {
+    canvas.style.display = 'none';
+    document.getElementById('history-disclaimer').textContent = state.language === 'pt' 
+      ? 'Histórico de preço indisponível para lançamentos futuros.' 
+      : 'Price history unavailable for future releases.';
+    return;
+  } else {
+    canvas.style.display = 'block';
+    document.getElementById('history-disclaimer').textContent = state.language === 'pt'
+      ? 'Mostrando variações de preço na eShop (convertido para a moeda ativa)'
+      : 'Showing price variations in the eShop (converted to active currency)';
+  }
+
+  const labels = historyData.map(h => h.date);
+  const dataPoints = historyData.map(h => {
+    if (state.currency === 'BRL') {
+      return getGameBRLPrice(game.nsuid, h.price).value;
+    }
+    return h.price;
+  });
+
+  const currencySymbol = state.currency === 'BRL' ? 'R$' : '$';
+  const isS2 = game.platform === 'Nintendo Switch 2';
+  const accentColor = isS2 ? '#00e5ff' : '#ff3e3e';
+  const glowGradient = ctx.createLinearGradient(0, 0, 0, 200);
+  
+  if (isS2) {
+    glowGradient.addColorStop(0, 'rgba(0, 229, 255, 0.35)');
+    glowGradient.addColorStop(1, 'rgba(0, 229, 255, 0.0)');
+  } else {
+    glowGradient.addColorStop(0, 'rgba(255, 62, 62, 0.35)');
+    glowGradient.addColorStop(1, 'rgba(255, 62, 62, 0.0)');
+  }
+
+  priceChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: state.language === 'pt' ? 'Preço' : 'Price',
+        data: dataPoints,
+        borderColor: accentColor,
+        backgroundColor: glowGradient,
+        borderWidth: 3,
+        fill: true,
+        tension: 0.3,
+        pointBackgroundColor: accentColor,
+        pointBorderColor: '#ffffff',
+        pointBorderWidth: 1,
+        pointRadius: 5,
+        pointHoverRadius: 7
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          backgroundColor: '#1f2833',
+          borderColor: 'rgba(255, 255, 255, 0.08)',
+          borderWidth: 1,
+          titleFont: { family: 'Outfit', size: 12 },
+          bodyFont: { family: 'Outfit', size: 14, weight: 'bold' },
+          callbacks: {
+            label: function(context) {
+              return ` ${currencySymbol} ${context.parsed.y.toFixed(2)}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: {
+            color: 'rgba(255, 255, 255, 0.05)'
+          },
+          ticks: {
+            color: '#c5c6c7',
+            font: { family: 'Outfit', size: 10 }
+          }
+        },
+        y: {
+          grid: {
+            color: 'rgba(255, 255, 255, 0.05)'
+          },
+          ticks: {
+            color: '#c5c6c7',
+            font: { family: 'Outfit', size: 10 },
+            callback: function(value) {
+              return currencySymbol + ' ' + value.toFixed(0);
+            }
+          }
+        }
+      }
+    }
+  });
+}
+

@@ -13,6 +13,9 @@
   
   <!-- html2canvas para salvar o card resumo em imagem -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  
+  <!-- Chart.js para o gráfico de histórico de preços -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -62,6 +65,9 @@
             </button>
             <button class="filter-btn" data-platform="switch2">
               <i class="fas fa-circle" style="color: var(--neon-blue);"></i> <span data-i18n="filterSwitch2">Switch 2</span>
+            </button>
+            <button class="filter-btn" data-platform="favorites">
+              <i class="fas fa-heart" style="color: #e74c3c;"></i> <span data-i18n="filterFavorites">Favoritos</span>
             </button>
           </div>
 
@@ -237,6 +243,46 @@
         </div>
 
         <button class="download-image-btn" id="download-image-btn" data-i18n="downloadBtn">Baixar Card de Resumo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE DETALHES E HISTÓRICO DE PREÇOS -->
+  <div class="modal-overlay" id="game-details-overlay">
+    <div class="modal-container game-details-container">
+      <div class="modal-header">
+        <h3 data-i18n="detailsModalTitle">Detalhes do Jogo</h3>
+        <button class="close-modal-btn" id="close-details-btn">&times;</button>
+      </div>
+      <div class="modal-content">
+        <div class="details-hero">
+          <img id="details-game-img" src="" alt="Capa do Jogo">
+          <div class="details-meta">
+            <h2 id="details-game-title">Nome do Jogo</h2>
+            <div class="details-badges">
+              <span id="details-platform-badge" class="platform-badge">Switch 1</span>
+              <span id="details-type-badge" class="type-badge">DLC</span>
+            </div>
+            <div id="details-price-box" class="details-price-box"></div>
+          </div>
+        </div>
+        
+        <div class="details-actions">
+          <button id="details-add-btn" class="details-action-btn">
+            <i class="fas fa-plus"></i> <span data-i18n="addToAccount">Adicionar à Conta</span>
+          </button>
+          <button id="details-fav-btn" class="details-action-btn fav-action">
+            <i class="far fa-heart"></i> <span data-i18n="favorite">Favorito</span>
+          </button>
+        </div>
+
+        <div class="price-history-section">
+          <h4><i class="fas fa-chart-line"></i> <span data-i18n="priceHistory">Histórico de Preços</span></h4>
+          <p class="history-disclaimer" id="history-disclaimer">Mostrando variações de preço na eShop (convertido para a moeda ativa)</p>
+          <div class="chart-container" style="position: relative; width: 100%; height: 220px; margin-top: 0.5rem;">
+            <canvas id="priceHistoryChart"></canvas>
+          </div>
+        </div>
       </div>
     </div>
   </div>
